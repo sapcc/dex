@@ -118,6 +118,7 @@ const (
 const (
 	grantTypeAuthorizationCode = "authorization_code"
 	grantTypeRefreshToken      = "refresh_token"
+	grantTypePassword          = "password"
 )
 
 const (
@@ -371,6 +372,45 @@ func (s *Server) newIDToken(clientID string, claims storage.Claims, scopes []str
 	return idToken, expiry, nil
 }
 
+func (s *Server) checkScopes(scopes []string, clientID string) (errType string, err string) {
+	var (
+		unrecognized  []string
+		invalidScopes []string
+	)
+	hasOpenIDScope := false
+	for _, scope := range scopes {
+		switch scope {
+		case scopeOpenID:
+			hasOpenIDScope = true
+		case scopeOfflineAccess, scopeEmail, scopeProfile, scopeGroups, scopeFederatedID:
+		default:
+			peerID, ok := parseCrossClientScope(scope)
+			if !ok {
+				unrecognized = append(unrecognized, scope)
+				continue
+			}
+
+			isTrusted, err := s.validateCrossClientTrust(clientID, peerID)
+			if err != nil {
+				return errServerError, "Internal server error."
+			}
+			if !isTrusted {
+				invalidScopes = append(invalidScopes, scope)
+			}
+		}
+	}
+	if !hasOpenIDScope {
+		return "invalid_scope", `Missing required scope(s) ["openid"].`
+	}
+	if len(unrecognized) > 0 {
+		return "invalid_scope", fmt.Sprintf("Unrecognized scope(s) %q", unrecognized)
+	}
+	if len(invalidScopes) > 0 {
+		return "invalid_scope", fmt.Sprintf("Client can't request scope(s) %q", invalidScopes)
+	}
+	return "", ""
+}
+
 // parse the initial request from the OAuth2 client.
 func (s *Server) parseAuthorizationRequest(r *http.Request) (req storage.AuthRequest, oauth2Err *authErr) {
 	if err := r.ParseForm(); err != nil {
@@ -385,6 +425,7 @@ func (s *Server) parseAuthorizationRequest(r *http.Request) (req storage.AuthReq
 	clientID := q.Get("client_id")
 	state := q.Get("state")
 	nonce := q.Get("nonce")
+	connectorID := q.Get("connector_id")
 	// Some clients, like the old go-oidc, provide extra whitespace. Tolerate this.
 	scopes := strings.Fields(q.Get("scope"))
 	responseTypes := strings.Fields(q.Get("response_type"))
@@ -409,40 +450,8 @@ func (s *Server) parseAuthorizationRequest(r *http.Request) (req storage.AuthReq
 		return &authErr{state, redirectURI, typ, fmt.Sprintf(format, a...)}
 	}
 
-	var (
-		unrecognized  []string
-		invalidScopes []string
-	)
-	hasOpenIDScope := false
-	for _, scope := range scopes {
-		switch scope {
-		case scopeOpenID:
-			hasOpenIDScope = true
-		case scopeOfflineAccess, scopeEmail, scopeProfile, scopeGroups, scopeFederatedID:
-		default:
-			peerID, ok := parseCrossClientScope(scope)
-			if !ok {
-				unrecognized = append(unrecognized, scope)
-				continue
-			}
-
-			isTrusted, err := s.validateCrossClientTrust(clientID, peerID)
-			if err != nil {
-				return req, newErr(errServerError, "Internal server error.")
-			}
-			if !isTrusted {
-				invalidScopes = append(invalidScopes, scope)
-			}
-		}
-	}
-	if !hasOpenIDScope {
-		return req, newErr("invalid_scope", `Missing required scope(s) ["openid"].`)
-	}
-	if len(unrecognized) > 0 {
-		return req, newErr("invalid_scope", "Unrecognized scope(s) %q", unrecognized)
-	}
-	if len(invalidScopes) > 0 {
-		return req, newErr("invalid_scope", "Client can't request scope(s) %q", invalidScopes)
+	if errType, err := s.checkScopes(scopes, clientID); err != "" {
+		return req, newErr(errType, err)
 	}
 
 	var rt struct {
@@ -503,6 +512,7 @@ func (s *Server) parseAuthorizationRequest(r *http.Request) (req storage.AuthReq
 		Scopes:              scopes,
 		RedirectURI:         redirectURI,
 		ResponseTypes:       responseTypes,
+		ConnectorID:         connectorID,
 	}, nil
 }
 

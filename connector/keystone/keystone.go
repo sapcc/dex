@@ -2,34 +2,25 @@
 package keystone
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"io/ioutil"
-	"net/http"
-
 	"github.com/dexidp/dex/connector"
 	"github.com/dexidp/dex/pkg/log"
+	"github.com/gophercloud/gophercloud"
+	"github.com/gophercloud/gophercloud/openstack"
+	"github.com/gophercloud/gophercloud/openstack/identity/v3/groups"
+	tokens3 "github.com/gophercloud/gophercloud/openstack/identity/v3/tokens"
+	"github.com/gophercloud/gophercloud/openstack/identity/v3/users"
 )
 
 type conn struct {
-	Domain        string
-	Host          string
-	AdminUsername string
-	AdminPassword string
-	Logger        log.Logger
-}
-
-type userKeystone struct {
-	Domain domainKeystone `json:"domain"`
-	ID     string         `json:"id"`
-	Name   string         `json:"name"`
-}
-
-type domainKeystone struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	Provider   *gophercloud.ProviderClient
+	Client     *gophercloud.ServiceClient
+	DomainName string
+	Host       string
+	Logger     log.Logger
+	UserPrompt string
 }
 
 // Config holds the configuration parameters for Keystone connector.
@@ -40,59 +31,23 @@ type domainKeystone struct {
 //		id: keystone
 //		name: Keystone
 //		config:
-//			keystoneHost: http://example:5000
-//			domain: default
-//      keystoneUsername: demo
-//      keystonePassword: DEMO_PASS
+//			authURL: http://example:5000
+//			domain: Default
+//      	adminUsername: demo
+//      	adminPassword: DEMO_PASS
+//      	adminUserDomain: Default
+//      	adminProject: admin
+//      	adminProjectDomain: Default
 type Config struct {
-	Domain        string `json:"domain"`
-	Host          string `json:"keystoneHost"`
-	AdminUsername string `json:"keystoneUsername"`
-	AdminPassword string `json:"keystonePassword"`
-}
-
-type loginRequestData struct {
-	auth `json:"auth"`
-}
-
-type auth struct {
-	Identity identity `json:"identity"`
-}
-
-type identity struct {
-	Methods  []string `json:"methods"`
-	Password password `json:"password"`
-}
-
-type password struct {
-	User user `json:"user"`
-}
-
-type user struct {
-	Name     string `json:"name"`
-	Domain   domain `json:"domain"`
-	Password string `json:"password"`
-}
-
-type domain struct {
-	ID string `json:"id"`
-}
-
-type token struct {
-	User userKeystone `json:"user"`
-}
-
-type tokenResponse struct {
-	Token token `json:"token"`
-}
-
-type group struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-}
-
-type groupsResponse struct {
-	Groups []group `json:"groups"`
+	DomainName             string `json:"domain"`
+	AuthURL                string `json:"authURL"`
+	AdminUsername          string `json:"adminUsername"`
+	AdminPassword          string `json:"adminPassword"`
+	AdminUserDomainName    string `json:"adminUserDomain"`
+	AdminProject           string `json:"adminProject"`
+	AdminProjectDomainName string `json:"adminProjectDomain"`
+	AdminDomainName        string `json:"adminDomain"`
+	Prompt                 string `json:"usernamePrompt"`
 }
 
 var (
@@ -102,169 +57,142 @@ var (
 
 // Open returns an authentication strategy using Keystone.
 func (c *Config) Open(id string, logger log.Logger) (connector.Connector, error) {
+	opts := gophercloud.AuthOptions{
+		IdentityEndpoint: c.AuthURL,
+		Username:         c.AdminUsername,
+		Password:         c.AdminPassword,
+		DomainName:       c.AdminUserDomainName,
+		Scope:            &gophercloud.AuthScope{},
+		AllowReauth:      true,
+	}
+
+	if c.AdminProject != "" {
+		opts.Scope.ProjectName = c.AdminProject
+		opts.Scope.DomainName = c.AdminProjectDomainName
+	} else {
+		if c.AdminDomainName != "" {
+			opts.Scope.DomainName = c.AdminDomainName
+		}
+	}
+
+	provider, err := openstack.AuthenticatedClient(opts)
+	if err != nil {
+		return nil, fmt.Errorf("admin %s@%s authentication error %v", c.AdminUsername, c.DomainName, err)
+	}
+
+	client, err := openstack.NewIdentityV3(provider, gophercloud.EndpointOpts{})
+
+	prompt := c.Prompt
+	if prompt == "" {
+		prompt = "username"
+	}
+
 	return &conn{
-		c.Domain,
-		c.Host,
-		c.AdminUsername,
-		c.AdminPassword,
-		logger}, nil
+		provider,
+		client,
+		c.DomainName,
+		c.AuthURL,
+		logger,
+		prompt}, nil
 }
 
 func (p *conn) Close() error { return nil }
 
 func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, password string) (identity connector.Identity, validPassword bool, err error) {
-	resp, err := p.getTokenResponse(ctx, username, password)
+	opts := gophercloud.AuthOptions{
+		IdentityEndpoint: p.Provider.IdentityEndpoint,
+		Username:         username,
+		Password:         password,
+		DomainName:       p.DomainName,
+	}
+
+	provider, err := openstack.AuthenticatedClient(opts)
 	if err != nil {
-		return identity, false, fmt.Errorf("keystone: error %v", err)
-	}
-	if resp.StatusCode/100 != 2 {
-		return identity, false, fmt.Errorf("keystone login: error %v", resp.StatusCode)
-	}
-	if resp.StatusCode != 201 {
 		return identity, false, nil
 	}
-	token := resp.Header.Get("X-Subject-Token")
-	data, err := ioutil.ReadAll(resp.Body)
+
+	userID, err := getAuthenticatedUserID(provider)
 	if err != nil {
 		return identity, false, err
 	}
-	defer resp.Body.Close()
-	var tokenResp = new(tokenResponse)
-	err = json.Unmarshal(data, &tokenResp)
-	if err != nil {
-		return identity, false, fmt.Errorf("keystone: invalid token response: %v", err)
-	}
+
 	if scopes.Groups {
-		groups, err := p.getUserGroups(ctx, tokenResp.Token.User.ID, token)
+		identity.Groups, err = getUserGroups(p.Client, userID)
 		if err != nil {
-			return identity, false, err
+			return identity, true, err
 		}
-		identity.Groups = groups
 	}
-	identity.Username = username
-	identity.UserID = tokenResp.Token.User.ID
+	identity.Username = username + "@" + p.DomainName
+	identity.UserID = userID
 	return identity, true, nil
 }
 
-func (p *conn) Prompt() string { return "username" }
+func (p *conn) Prompt() string { return p.UserPrompt }
 
-func (p *conn) Refresh(
-	ctx context.Context, scopes connector.Scopes, identity connector.Identity) (connector.Identity, error) {
-
-	token, err := p.getAdminToken(ctx)
-	if err != nil {
-		return identity, fmt.Errorf("keystone: failed to obtain admin token: %v", err)
-	}
-	ok, err := p.checkIfUserExists(ctx, identity.UserID, token)
+func (p *conn) Refresh(ctx context.Context, scopes connector.Scopes, identity connector.Identity) (connector.Identity, error) {
+	user, err := getUser(p.Client, identity.UserID)
 	if err != nil {
 		return identity, err
 	}
-	if !ok {
-		return identity, fmt.Errorf("keystone: user %q does not exist", identity.UserID)
+
+	if !user.Enabled {
+		return identity, fmt.Errorf("user %s@%s is disabled", user.Name, p.DomainName)
 	}
+
 	if scopes.Groups {
-		groups, err := p.getUserGroups(ctx, identity.UserID, token)
+		identity.Groups, err = getUserGroups(p.Client, user.ID)
 		if err != nil {
 			return identity, err
 		}
-		identity.Groups = groups
 	}
 	return identity, nil
 }
 
-func (p *conn) getTokenResponse(ctx context.Context, username, pass string) (response *http.Response, err error) {
-	client := &http.Client{}
-	jsonData := loginRequestData{
-		auth: auth{
-			Identity: identity{
-				Methods: []string{"password"},
-				Password: password{
-					User: user{
-						Name:     username,
-						Domain:   domain{ID: p.Domain},
-						Password: pass,
-					},
-				},
-			},
-		},
+func getAuthenticatedUserID(providerClient *gophercloud.ProviderClient) (string, error) {
+	r := providerClient.GetAuthResult()
+	if r == nil {
+		//ProviderClient did not use openstack.Authenticate(), e.g. because token
+		//was set manually with ProviderClient.SetToken()
+		return "", errors.New("no AuthResult available")
 	}
-	jsonValue, err := json.Marshal(jsonData)
-	if err != nil {
-		return nil, err
+	switch r := r.(type) {
+	case tokens3.CreateResult:
+		u, err := r.ExtractUser()
+		if err != nil {
+			return "", err
+		}
+		return u.ID, nil
+	default:
+		panic(fmt.Sprintf("got unexpected AuthResult type %t", r))
 	}
-	// https://developer.openstack.org/api-ref/identity/v3/#password-authentication-with-unscoped-authorization
-	authTokenURL := p.Host + "/v3/auth/tokens/"
-	req, err := http.NewRequest("POST", authTokenURL, bytes.NewBuffer(jsonValue))
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req = req.WithContext(ctx)
-
-	return client.Do(req)
 }
 
-func (p *conn) getAdminToken(ctx context.Context) (string, error) {
-	resp, err := p.getTokenResponse(ctx, p.AdminUsername, p.AdminPassword)
+func getUser(client *gophercloud.ServiceClient, userID string) (*users.User, error) {
+	result := users.Get(client, userID)
+	user, err := result.Extract()
 	if err != nil {
-		return "", err
+		return nil, fmt.Errorf("user-id %s not found: %v", userID, err)
 	}
-	token := resp.Header.Get("X-Subject-Token")
-	return token, nil
+
+	return user, nil
 }
 
-func (p *conn) checkIfUserExists(ctx context.Context, userID string, token string) (bool, error) {
-	// https://developer.openstack.org/api-ref/identity/v3/#show-user-details
-	userURL := p.Host + "/v3/users/" + userID
-	client := &http.Client{}
-	req, err := http.NewRequest("GET", userURL, nil)
+func getUserGroups(client *gophercloud.ServiceClient, userID string) ([]string, error) {
+	result := make([]string, 0)
+
+	allPages, err := users.ListGroups(client, userID).AllPages()
 	if err != nil {
-		return false, err
+		return nil, fmt.Errorf("list groups for user-id %s failed: %v", userID, err)
 	}
 
-	req.Header.Set("X-Auth-Token", token)
-	req = req.WithContext(ctx)
-	resp, err := client.Do(req)
+	allGroups, err := groups.ExtractGroups(allPages)
 	if err != nil {
-		return false, err
+		return nil, fmt.Errorf("extract groups for user-id %s failed: %v", userID, err)
 	}
 
-	if resp.StatusCode == 200 {
-		return true, nil
-	}
-	return false, err
-}
-
-func (p *conn) getUserGroups(ctx context.Context, userID string, token string) ([]string, error) {
-	client := &http.Client{}
-	// https://developer.openstack.org/api-ref/identity/v3/#list-groups-to-which-a-user-belongs
-	groupsURL := p.Host + "/v3/users/" + userID + "/groups"
-	req, err := http.NewRequest("GET", groupsURL, nil)
-	req.Header.Set("X-Auth-Token", token)
-	req = req.WithContext(ctx)
-	resp, err := client.Do(req)
-	if err != nil {
-		p.Logger.Errorf("keystone: error while fetching user %q groups\n", userID)
-		return nil, err
+	for _, group := range allGroups {
+		result = append(result, group.Name)
 	}
 
-	data, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var groupsResp = new(groupsResponse)
-
-	err = json.Unmarshal(data, &groupsResp)
-	if err != nil {
-		return nil, err
-	}
-
-	groups := make([]string, len(groupsResp.Groups))
-	for i, group := range groupsResp.Groups {
-		groups[i] = group.Name
-	}
-	return groups, nil
+	return result, nil
 }

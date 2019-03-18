@@ -18,6 +18,7 @@ require (
 	github.com/golang/groupcache v0.0.0-20181024230925-c65c006176ff // indirect
 	github.com/golang/protobuf v0.0.0-20171113180720-1e59b77b52bf
 	github.com/google/btree v0.0.0-20180813153112-4030bb1f1f0c // indirect
+	github.com/gophercloud/gophercloud v0.0.0-20190318015731-ff9851476e98
 	github.com/gorilla/context v0.0.0-20160525203319-aed02d124ae4 // indirect
 	github.com/gorilla/handlers v0.0.0-20161206055144-3a5767ca75ec
 	github.com/gorilla/mux v0.0.0-20160605233521-9fa818a44c2b
@@ -45,12 +46,11 @@ require (
 	github.com/stretchr/testify v1.2.2 // indirect
 	github.com/ugorji/go/codec v0.0.0-20181127175209-856da096dbdf // indirect
 	github.com/xiang90/probing v0.0.0-20160813154853-07dd2e8dfe18 // indirect
-	golang.org/x/crypto v0.0.0-20160711182412-2c99acdd1e9b
+	golang.org/x/crypto v0.0.0-20190211182817-74369b46fc67
 	golang.org/x/lint v0.0.0-20181026193005-c67002cb31c3
 	golang.org/x/net v0.0.0-20170413175226-5602c733f70a
 	golang.org/x/oauth2 v0.0.0-20160718223228-08c8d727d239
 	golang.org/x/sync v0.0.0-20181108010431-42b317875d0f // indirect
-	golang.org/x/sys v0.0.0-20151211033651-833a04a10549 // indirect
 	golang.org/x/text v0.0.0-20170401064109-f4b4367115ec // indirect
 	golang.org/x/time v0.0.0-20181108054448-85acf8d2951c // indirect
 	golang.org/x/tools v0.0.0-20181201035826-d0ca3933b724 // indirect
@@ -61,5 +61,4 @@ require (
 	gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127 // indirect
 	gopkg.in/ldap.v2 v2.5.1
 	gopkg.in/square/go-jose.v2 v2.1.8
-	gopkg.in/yaml.v2 v2.0.0-20160301204022-a83829b6f129 // indirect
 )
