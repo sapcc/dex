@@ -19,6 +19,7 @@ require (
 	github.com/golang/protobuf v0.0.0-20171113180720-1e59b77b52bf
 	github.com/google/btree v0.0.0-20180813153112-4030bb1f1f0c // indirect
 	github.com/gophercloud/gophercloud v0.0.0-20190318015731-ff9851476e98
+	github.com/gophercloud/utils v0.0.0-20190313033024-0bcc8e728cb5
 	github.com/gorilla/context v0.0.0-20160525203319-aed02d124ae4 // indirect
 	github.com/gorilla/handlers v0.0.0-20161206055144-3a5767ca75ec
 	github.com/gorilla/mux v0.0.0-20160605233521-9fa818a44c2b

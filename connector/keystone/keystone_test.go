@@ -1,13 +1,13 @@
 package keystone
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
-	"io/ioutil"
-	"net/http"
-	"os"
+	"github.com/gophercloud/gophercloud"
+	"github.com/gophercloud/gophercloud/openstack"
+	"github.com/gophercloud/gophercloud/openstack/identity/v3/groups"
+	"github.com/gophercloud/gophercloud/openstack/identity/v3/roles"
+	"github.com/gophercloud/gophercloud/openstack/identity/v3/users"
+	"github.com/gophercloud/utils/openstack/clientconfig"
 	"reflect"
 	"strings"
 	"testing"
@@ -18,206 +18,129 @@ import (
 const (
 	invalidPass = "WRONG_PASS"
 
-	testUser   = "test_user"
-	testPass   = "test_pass"
-	testEmail  = "test@example.com"
-	testGroup  = "test_group"
-	testDomain = "default"
+	testUser       = "test_user"
+	testPass       = "test_pass"
+	testEmail      = "test@example.com"
+	testGroup      = "test_group"
+	testDomainID   = "default"
+	testDomainName = "Default"
 )
 
 var (
-	keystoneURL      = ""
-	keystoneAdminURL = ""
-	adminUser        = ""
-	adminPass        = ""
-	authTokenURL     = ""
-	usersURL         = ""
-	groupsURL        = ""
+	provider *gophercloud.ProviderClient
+	client   *gophercloud.ServiceClient
 )
 
-type userResponse struct {
-	User struct {
-		ID string `json:"id"`
-	} `json:"user"`
-}
-
-type groupResponse struct {
-	Group struct {
-		ID string `json:"id"`
-	} `json:"group"`
-}
-
-func getAdminToken(t *testing.T, adminName, adminPass string) (token, id string) {
+// create a testuser
+func createUser(t *testing.T, userDomainID, userName, userEmail, userPass string) string {
 	t.Helper()
-	client := &http.Client{}
 
-	jsonData := loginRequestData{
-		auth: auth{
-			Identity: identity{
-				Methods: []string{"password"},
-				Password: password{
-					User: user{
-						Name:     adminName,
-						Domain:   domain{ID: testDomain},
-						Password: adminPass,
-					},
-				},
-			},
+	createOpts := users.CreateOpts{
+		Name:     userName,
+		Password: userPass,
+		Enabled:  gophercloud.Enabled,
+		DomainID: userDomainID,
+		Extra: map[string]interface{}{
+			"email": userEmail,
 		},
 	}
 
-	body, err := json.Marshal(jsonData)
+	user, err := users.Create(client, createOpts).Extract()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatal(err.Error())
 	}
 
-	req, err := http.NewRequest("POST", authTokenURL, bytes.NewBuffer(body))
+	roleID := getRole(t, "admin").ID
+
+	err = roles.Assign(client, roleID, roles.AssignOpts{
+		UserID:   user.ID,
+		DomainID: userDomainID,
+	}).ExtractErr()
+
 	if err != nil {
-		t.Fatalf("keystone: failed to obtain admin token: %v\n", err)
+		t.Fatal(err.Error())
 	}
 
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	token = resp.Header.Get("X-Subject-Token")
-
-	data, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	var tokenResp = new(tokenResponse)
-	err = json.Unmarshal(data, &tokenResp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return token, tokenResp.Token.User.ID
+	return user.ID
 }
 
-func createUser(t *testing.T, token, userName, userEmail, userPass string) string {
+// delete user
+func deleteUser(t *testing.T, userID string) {
 	t.Helper()
-	client := &http.Client{}
-
-	createUserData := map[string]interface{}{
-		"user": map[string]interface{}{
-			"name":     userName,
-			"email":    userEmail,
-			"enabled":  true,
-			"password": userPass,
-			"roles":    []string{"admin"},
-		},
+	if userID != "" {
+		users.Delete(client, userID).ExtractErr()
 	}
-
-	body, err := json.Marshal(createUserData)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	req, err := http.NewRequest("POST", usersURL, bytes.NewBuffer(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("X-Auth-Token", token)
-	req.Header.Add("Content-Type", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	data, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	var userResp = new(userResponse)
-	err = json.Unmarshal(data, &userResp)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	return userResp.User.ID
 }
 
-// delete group or user
-func delete(t *testing.T, token, id, uri string) {
+// create a group
+func createGroup(t *testing.T, domainID, description, name string) string {
 	t.Helper()
-	client := &http.Client{}
 
-	deleteURI := uri + id
-	req, err := http.NewRequest("DELETE", deleteURI, nil)
-	if err != nil {
-		t.Fatalf("error: %v", err)
+	createOpts := groups.CreateOpts{
+		Name:        name,
+		DomainID:    domainID,
+		Description: description,
 	}
-	req.Header.Set("X-Auth-Token", token)
-	client.Do(req)
+
+	group, err := groups.Create(client, createOpts).Extract()
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+
+	return group.ID
 }
 
-func createGroup(t *testing.T, token, description, name string) string {
+// delete user
+func deleteGroup(t *testing.T, groupID string) {
 	t.Helper()
-	client := &http.Client{}
-
-	createGroupData := map[string]interface{}{
-		"group": map[string]interface{}{
-			"name":        name,
-			"description": description,
-		},
+	if groupID != "" {
+		groups.Delete(client, groupID).ExtractErr()
 	}
-
-	body, err := json.Marshal(createGroupData)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	req, err := http.NewRequest("POST", groupsURL, bytes.NewBuffer(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("X-Auth-Token", token)
-	req.Header.Add("Content-Type", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	data, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	var groupResp = new(groupResponse)
-	err = json.Unmarshal(data, &groupResp)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	return groupResp.Group.ID
 }
 
-func addUserToGroup(t *testing.T, token, groupID, userID string) error {
+func addUserToGroup(t *testing.T, groupID, userID string) error {
 	t.Helper()
-	uri := groupsURL + groupID + "/users/" + userID
-	client := &http.Client{}
-	req, err := http.NewRequest("PUT", uri, nil)
+
+	err := users.AddToGroup(client, groupID, userID).ExtractErr()
+
 	if err != nil {
-		return err
+		t.Fatal(err.Error())
 	}
-	req.Header.Set("X-Auth-Token", token)
-	client.Do(req)
 	return nil
 }
 
+func getRole(t *testing.T, name string) roles.Role {
+	t.Helper()
+
+	var result roles.Role
+
+	listOpts := roles.ListOpts{
+		Name: name,
+	}
+	allPages, err := roles.List(client, listOpts).AllPages()
+	if err != nil {
+		t.Error(err.Error())
+	}
+	allRoles, err := roles.ExtractRoles(allPages)
+	if err != nil {
+		t.Error(err.Error())
+	}
+
+	for _, role := range allRoles {
+		result = role
+	}
+
+	return result
+}
+
 func TestIncorrectCredentialsLogin(t *testing.T) {
-	setupVariables(t)
-	c := conn{Host: keystoneURL, Domain: testDomain,
-		AdminUsername: adminUser, AdminPassword: adminPass}
+	setupClient(t)
+	userID := createUser(t, testDomainID, testUser, testEmail, testPass)
+	defer deleteUser(t, userID)
+
+	c := conn{Domain: testDomainName, Provider: provider, Client: client}
 	s := connector.Scopes{OfflineAccess: true, Groups: true}
-	_, validPW, err := c.Login(context.Background(), s, adminUser, invalidPass)
+	_, validPW, err := c.Login(context.Background(), s, testUser, invalidPass)
 
 	if validPW {
 		t.Fatal("Incorrect password check")
@@ -227,19 +150,20 @@ func TestIncorrectCredentialsLogin(t *testing.T) {
 		t.Fatal("Error should be returned when invalid password is provided")
 	}
 
-	if !strings.Contains(err.Error(), "401") {
-		t.Fatal("Unrecognized error, expecting 401")
+	if !strings.Contains(err.Error(), "Authentication failed") {
+		t.Fatalf("Unrecognized error %v, expecting Authentication failed", err)
 	}
 }
 
 func TestValidUserLogin(t *testing.T) {
-	setupVariables(t)
-	token, _ := getAdminToken(t, adminUser, adminPass)
-	userID := createUser(t, token, testUser, testEmail, testPass)
-	c := conn{Host: keystoneURL, Domain: testDomain,
-		AdminUsername: adminUser, AdminPassword: adminPass}
+	setupClient(t)
+	userID := createUser(t, testDomainID, testUser, testEmail, testPass)
+	defer deleteUser(t, userID)
+
+	c := conn{Domain: testDomainName, Provider: provider, Client: client}
 	s := connector.Scopes{OfflineAccess: true, Groups: true}
 	identity, validPW, err := c.Login(context.Background(), s, testUser, testPass)
+
 	if err != nil {
 		t.Fatal(err.Error())
 	}
@@ -248,20 +172,20 @@ func TestValidUserLogin(t *testing.T) {
 	if !validPW {
 		t.Fatal("Valid password was not accepted")
 	}
-	delete(t, token, userID, usersURL)
 }
 
 func TestUseRefreshToken(t *testing.T) {
-	setupVariables(t)
-	token, adminID := getAdminToken(t, adminUser, adminPass)
-	groupID := createGroup(t, token, "Test group description", testGroup)
-	addUserToGroup(t, token, groupID, adminID)
+	setupClient(t)
+	userID := createUser(t, testDomainID, testUser, testEmail, testPass)
+	defer deleteUser(t, userID)
+	groupID := createGroup(t, testDomainID, "Test group description", testGroup)
+	defer deleteGroup(t, groupID)
+	addUserToGroup(t, groupID, userID)
 
-	c := conn{Host: keystoneURL, Domain: testDomain,
-		AdminUsername: adminUser, AdminPassword: adminPass}
+	c := conn{Domain: testDomainName, Provider: provider, Client: client}
 	s := connector.Scopes{OfflineAccess: true, Groups: true}
 
-	identityLogin, _, err := c.Login(context.Background(), s, adminUser, adminPass)
+	identityLogin, _, err := c.Login(context.Background(), s, testUser, testPass)
 	if err != nil {
 		t.Fatal(err.Error())
 	}
@@ -271,19 +195,16 @@ func TestUseRefreshToken(t *testing.T) {
 		t.Fatal(err.Error())
 	}
 
-	delete(t, token, groupID, groupsURL)
-
 	expectEquals(t, 1, len(identityRefresh.Groups))
 	expectEquals(t, testGroup, string(identityRefresh.Groups[0]))
 }
 
 func TestUseRefreshTokenUserDeleted(t *testing.T) {
-	setupVariables(t)
-	token, _ := getAdminToken(t, adminUser, adminPass)
-	userID := createUser(t, token, testUser, testEmail, testPass)
+	setupClient(t)
+	userID := createUser(t, testDomainID, testUser, testEmail, testPass)
+	defer deleteUser(t, userID)
 
-	c := conn{Host: keystoneURL, Domain: testDomain,
-		AdminUsername: adminUser, AdminPassword: adminPass}
+	c := conn{Domain: testDomainName, Provider: provider, Client: client}
 	s := connector.Scopes{OfflineAccess: true, Groups: true}
 
 	identityLogin, _, err := c.Login(context.Background(), s, testUser, testPass)
@@ -296,21 +217,20 @@ func TestUseRefreshTokenUserDeleted(t *testing.T) {
 		t.Fatal(err.Error())
 	}
 
-	delete(t, token, userID, usersURL)
+	deleteUser(t, userID)
 	_, err = c.Refresh(context.Background(), s, identityLogin)
 
-	if !strings.Contains(err.Error(), "does not exist") {
+	if !strings.Contains(err.Error(), "not found") {
 		t.Errorf("unexpected error: %s", err.Error())
 	}
 }
 
 func TestUseRefreshTokenGroupsChanged(t *testing.T) {
-	setupVariables(t)
-	token, _ := getAdminToken(t, adminUser, adminPass)
-	userID := createUser(t, token, testUser, testEmail, testPass)
+	setupClient(t)
+	userID := createUser(t, testDomainID, testUser, testEmail, testPass)
+	defer deleteUser(t, userID)
 
-	c := conn{Host: keystoneURL, Domain: testDomain,
-		AdminUsername: adminUser, AdminPassword: adminPass}
+	c := conn{Domain: testDomainName, Provider: provider, Client: client}
 	s := connector.Scopes{OfflineAccess: true, Groups: true}
 
 	identityLogin, _, err := c.Login(context.Background(), s, testUser, testPass)
@@ -325,31 +245,30 @@ func TestUseRefreshTokenGroupsChanged(t *testing.T) {
 
 	expectEquals(t, 0, len(identityRefresh.Groups))
 
-	groupID := createGroup(t, token, "Test group", testGroup)
-	addUserToGroup(t, token, groupID, userID)
+	groupID := createGroup(t, testDomainID, "Test group", testGroup)
+	defer deleteGroup(t, groupID)
+	addUserToGroup(t, groupID, userID)
 
 	identityRefresh, err = c.Refresh(context.Background(), s, identityLogin)
 	if err != nil {
 		t.Fatal(err.Error())
 	}
 
-	delete(t, token, groupID, groupsURL)
-	delete(t, token, userID, usersURL)
-
 	expectEquals(t, 1, len(identityRefresh.Groups))
 }
 
 func TestNoGroupsInScope(t *testing.T) {
-	setupVariables(t)
-	token, _ := getAdminToken(t, adminUser, adminPass)
-	userID := createUser(t, token, testUser, testEmail, testPass)
+	setupClient(t)
+	userID := createUser(t, testDomainID, testUser, testEmail, testPass)
+	defer deleteUser(t, userID)
 
-	c := conn{Host: keystoneURL, Domain: testDomain,
-		AdminUsername: adminUser, AdminPassword: adminPass}
+	c := conn{Domain: testDomainName, Provider: provider, Client: client}
 	s := connector.Scopes{OfflineAccess: true, Groups: false}
 
-	groupID := createGroup(t, token, "Test group", testGroup)
-	addUserToGroup(t, token, groupID, userID)
+	groupID := createGroup(t, testDomainID, "Test group description", testGroup)
+	defer deleteGroup(t, groupID)
+
+	addUserToGroup(t, groupID, userID)
 
 	identityLogin, _, err := c.Login(context.Background(), s, testUser, testPass)
 	if err != nil {
@@ -362,39 +281,24 @@ func TestNoGroupsInScope(t *testing.T) {
 		t.Fatal(err.Error())
 	}
 	expectEquals(t, 0, len(identityRefresh.Groups))
-
-	delete(t, token, groupID, groupsURL)
-	delete(t, token, userID, usersURL)
 }
 
-func setupVariables(t *testing.T) {
-	keystoneURLEnv := "DEX_KEYSTONE_URL"
-	keystoneAdminURLEnv := "DEX_KEYSTONE_ADMIN_URL"
-	keystoneAdminUserEnv := "DEX_KEYSTONE_ADMIN_USER"
-	keystoneAdminPassEnv := "DEX_KEYSTONE_ADMIN_PASS"
-	keystoneURL = os.Getenv(keystoneURLEnv)
-	if keystoneURL == "" {
-		t.Skip(fmt.Sprintf("variable %q not set, skipping keystone connector tests\n", keystoneURLEnv))
+func setupClient(t *testing.T) {
+	authOpts := &clientconfig.ClientOpts{}
+
+	var err error
+
+	provider, err = clientconfig.AuthenticatedClient(authOpts)
+	if err != nil {
+		t.Skipf("Keystone auth environment not set, skipping: %v", err)
 		return
 	}
-	keystoneAdminURL = os.Getenv(keystoneAdminURLEnv)
-	if keystoneAdminURL == "" {
-		t.Skip(fmt.Sprintf("variable %q not set, skipping keystone connector tests\n", keystoneAdminURLEnv))
+
+	client, err = openstack.NewIdentityV3(provider, gophercloud.EndpointOpts{})
+	if err != nil {
+		t.Fatal(err.Error())
 		return
 	}
-	adminUser = os.Getenv(keystoneAdminUserEnv)
-	if adminUser == "" {
-		t.Skip(fmt.Sprintf("variable %q not set, skipping keystone connector tests\n", keystoneAdminUserEnv))
-		return
-	}
-	adminPass = os.Getenv(keystoneAdminPassEnv)
-	if adminPass == "" {
-		t.Skip(fmt.Sprintf("variable %q not set, skipping keystone connector tests\n", keystoneAdminPassEnv))
-		return
-	}
-	authTokenURL = keystoneURL + "/v3/auth/tokens/"
-	usersURL = keystoneAdminURL + "/v3/users/"
-	groupsURL = keystoneAdminURL + "/v3/groups/"
 }
 
 func expectEquals(t *testing.T, a interface{}, b interface{}) {

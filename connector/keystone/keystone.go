@@ -17,8 +17,7 @@ import (
 type conn struct {
 	Provider   *gophercloud.ProviderClient
 	Client     *gophercloud.ServiceClient
-	DomainName string
-	Host       string
+	Domain     string
 	Logger     log.Logger
 	UserPrompt string
 }
@@ -31,7 +30,7 @@ type conn struct {
 //		id: keystone
 //		name: Keystone
 //		config:
-//			authURL: http://example:5000
+//			host: http://example:5000
 //			domain: Default
 //      	adminUsername: demo
 //      	adminPassword: DEMO_PASS
@@ -39,8 +38,8 @@ type conn struct {
 //      	adminProject: admin
 //      	adminProjectDomain: Default
 type Config struct {
-	DomainName             string `json:"domain"`
-	AuthURL                string `json:"authURL"`
+	Domain                 string `json:"domain"`
+	Host                   string `json:"host"`
 	AdminUsername          string `json:"adminUsername"`
 	AdminPassword          string `json:"adminPassword"`
 	AdminUserDomainName    string `json:"adminUserDomain"`
@@ -58,7 +57,7 @@ var (
 // Open returns an authentication strategy using Keystone.
 func (c *Config) Open(id string, logger log.Logger) (connector.Connector, error) {
 	opts := gophercloud.AuthOptions{
-		IdentityEndpoint: c.AuthURL,
+		IdentityEndpoint: c.Host,
 		Username:         c.AdminUsername,
 		Password:         c.AdminPassword,
 		DomainName:       c.AdminUserDomainName,
@@ -77,21 +76,17 @@ func (c *Config) Open(id string, logger log.Logger) (connector.Connector, error)
 
 	provider, err := openstack.AuthenticatedClient(opts)
 	if err != nil {
-		return nil, fmt.Errorf("admin %s@%s authentication error %v", c.AdminUsername, c.DomainName, err)
+		return nil, fmt.Errorf("service-account %s@%s authentication failed: %v", c.AdminUsername, c.Domain, err)
 	}
 
 	client, err := openstack.NewIdentityV3(provider, gophercloud.EndpointOpts{})
 
 	prompt := c.Prompt
-	if prompt == "" {
-		prompt = "username"
-	}
 
 	return &conn{
 		provider,
 		client,
-		c.DomainName,
-		c.AuthURL,
+		c.Domain,
 		logger,
 		prompt}, nil
 }
@@ -103,12 +98,12 @@ func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, pas
 		IdentityEndpoint: p.Provider.IdentityEndpoint,
 		Username:         username,
 		Password:         password,
-		DomainName:       p.DomainName,
+		DomainName:       p.Domain,
 	}
 
 	provider, err := openstack.AuthenticatedClient(opts)
 	if err != nil {
-		return identity, false, nil
+		return identity, false, err
 	}
 
 	userID, err := getAuthenticatedUserID(provider)
@@ -117,30 +112,35 @@ func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, pas
 	}
 
 	if scopes.Groups {
-		identity.Groups, err = getUserGroups(p.Client, userID)
+		identity.Groups, err = p.getUserGroups(userID)
 		if err != nil {
 			return identity, true, err
 		}
 	}
-	identity.Username = username + "@" + p.DomainName
+	identity.Username = username + "@" + p.Domain
 	identity.UserID = userID
 	return identity, true, nil
 }
 
-func (p *conn) Prompt() string { return p.UserPrompt }
+func (p *conn) Prompt() string {
+	if p.UserPrompt != "" {
+		return p.UserPrompt
+	}
+	return "username"
+}
 
 func (p *conn) Refresh(ctx context.Context, scopes connector.Scopes, identity connector.Identity) (connector.Identity, error) {
-	user, err := getUser(p.Client, identity.UserID)
+	user, err := p.getUser(identity.UserID)
 	if err != nil {
 		return identity, err
 	}
 
 	if !user.Enabled {
-		return identity, fmt.Errorf("user %s@%s is disabled", user.Name, p.DomainName)
+		return identity, fmt.Errorf("user %s@%s is disabled", user.Name, p.Domain)
 	}
 
 	if scopes.Groups {
-		identity.Groups, err = getUserGroups(p.Client, user.ID)
+		identity.Groups, err = p.getUserGroups(user.ID)
 		if err != nil {
 			return identity, err
 		}
@@ -167,8 +167,8 @@ func getAuthenticatedUserID(providerClient *gophercloud.ProviderClient) (string,
 	}
 }
 
-func getUser(client *gophercloud.ServiceClient, userID string) (*users.User, error) {
-	result := users.Get(client, userID)
+func (p *conn) getUser(userID string) (*users.User, error) {
+	result := users.Get(p.Client, userID)
 	user, err := result.Extract()
 	if err != nil {
 		return nil, fmt.Errorf("user-id %s not found: %v", userID, err)
@@ -177,10 +177,10 @@ func getUser(client *gophercloud.ServiceClient, userID string) (*users.User, err
 	return user, nil
 }
 
-func getUserGroups(client *gophercloud.ServiceClient, userID string) ([]string, error) {
+func (p *conn) getUserGroups(userID string) ([]string, error) {
 	result := make([]string, 0)
 
-	allPages, err := users.ListGroups(client, userID).AllPages()
+	allPages, err := users.ListGroups(p.Client, userID).AllPages()
 	if err != nil {
 		return nil, fmt.Errorf("list groups for user-id %s failed: %v", userID, err)
 	}
