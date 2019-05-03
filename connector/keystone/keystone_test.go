@@ -29,6 +29,7 @@ const (
 var (
 	provider *gophercloud.ProviderClient
 	client   *gophercloud.ServiceClient
+	config *Config
 )
 
 // create a testuser
@@ -138,7 +139,7 @@ func TestIncorrectCredentialsLogin(t *testing.T) {
 	userID := createUser(t, testDomainID, testUser, testEmail, testPass)
 	defer deleteUser(t, userID)
 
-	c := conn{Domain: testDomainName, Provider: provider, Client: client}
+	c := conn{Config: config, ProviderClient: provider, ServiceClient: client}
 	s := connector.Scopes{OfflineAccess: true, Groups: true}
 	_, validPW, err := c.Login(context.Background(), s, testUser, invalidPass)
 
@@ -160,7 +161,7 @@ func TestValidUserLogin(t *testing.T) {
 	userID := createUser(t, testDomainID, testUser, testEmail, testPass)
 	defer deleteUser(t, userID)
 
-	c := conn{Domain: testDomainName, Provider: provider, Client: client}
+	c := conn{Config: config, ProviderClient: provider, ServiceClient: client}
 	s := connector.Scopes{OfflineAccess: true, Groups: true}
 	identity, validPW, err := c.Login(context.Background(), s, testUser, testPass)
 
@@ -182,7 +183,7 @@ func TestUseRefreshToken(t *testing.T) {
 	defer deleteGroup(t, groupID)
 	addUserToGroup(t, groupID, userID)
 
-	c := conn{Domain: testDomainName, Provider: provider, Client: client}
+	c := conn{Config: config, ProviderClient: provider, ServiceClient: client}
 	s := connector.Scopes{OfflineAccess: true, Groups: true}
 
 	identityLogin, _, err := c.Login(context.Background(), s, testUser, testPass)
@@ -204,7 +205,7 @@ func TestUseRefreshTokenUserDeleted(t *testing.T) {
 	userID := createUser(t, testDomainID, testUser, testEmail, testPass)
 	defer deleteUser(t, userID)
 
-	c := conn{Domain: testDomainName, Provider: provider, Client: client}
+	c := conn{Config: config, ProviderClient: provider, ServiceClient: client}
 	s := connector.Scopes{OfflineAccess: true, Groups: true}
 
 	identityLogin, _, err := c.Login(context.Background(), s, testUser, testPass)
@@ -230,7 +231,7 @@ func TestUseRefreshTokenGroupsChanged(t *testing.T) {
 	userID := createUser(t, testDomainID, testUser, testEmail, testPass)
 	defer deleteUser(t, userID)
 
-	c := conn{Domain: testDomainName, Provider: provider, Client: client}
+	c := conn{Config: config, ProviderClient: provider, ServiceClient: client}
 	s := connector.Scopes{OfflineAccess: true, Groups: true}
 
 	identityLogin, _, err := c.Login(context.Background(), s, testUser, testPass)
@@ -262,7 +263,7 @@ func TestNoGroupsInScope(t *testing.T) {
 	userID := createUser(t, testDomainID, testUser, testEmail, testPass)
 	defer deleteUser(t, userID)
 
-	c := conn{Domain: testDomainName, Provider: provider, Client: client}
+	c := conn{Config: config, ProviderClient: provider, ServiceClient: client}
 	s := connector.Scopes{OfflineAccess: true, Groups: false}
 
 	groupID := createGroup(t, testDomainID, "Test group description", testGroup)
@@ -299,6 +300,9 @@ func setupClient(t *testing.T) {
 		t.Fatal(err.Error())
 		return
 	}
+
+	var rig = false
+	config = &Config{Domain:testDomainName, IncludeRolesInGroups: & rig, GroupNameFormat: "%s"}
 }
 
 func expectEquals(t *testing.T, a interface{}, b interface{}) {

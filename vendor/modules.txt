@@ -25,6 +25,21 @@ github.com/golang/protobuf/protoc-gen-go/grpc
 github.com/golang/protobuf/protoc-gen-go/descriptor
 github.com/golang/protobuf/protoc-gen-go/plugin
 github.com/golang/protobuf/ptypes/any
+# github.com/gophercloud/gophercloud v0.0.0-20190318015731-ff9851476e98
+github.com/gophercloud/gophercloud
+github.com/gophercloud/gophercloud/openstack
+github.com/gophercloud/gophercloud/openstack/identity/v3/groups
+github.com/gophercloud/gophercloud/openstack/identity/v3/roles
+github.com/gophercloud/gophercloud/openstack/identity/v3/tokens
+github.com/gophercloud/gophercloud/openstack/identity/v3/users
+github.com/gophercloud/gophercloud/openstack/identity/v2/tokens
+github.com/gophercloud/gophercloud/openstack/utils
+github.com/gophercloud/gophercloud/internal
+github.com/gophercloud/gophercloud/pagination
+github.com/gophercloud/gophercloud/openstack/identity/v3/projects
+github.com/gophercloud/gophercloud/openstack/identity/v2/tenants
+# github.com/gophercloud/utils v0.0.0-20190313033024-0bcc8e728cb5
+github.com/gophercloud/utils/openstack/clientconfig
 # github.com/gorilla/context v0.0.0-20160525203319-aed02d124ae4
 github.com/gorilla/context
 # github.com/gorilla/handlers v0.0.0-20161206055144-3a5767ca75ec
@@ -74,7 +89,7 @@ github.com/sirupsen/logrus
 github.com/spf13/cobra
 # github.com/spf13/pflag v0.0.0-20160610190902-367864438f1b
 github.com/spf13/pflag
-# golang.org/x/crypto v0.0.0-20160711182412-2c99acdd1e9b
+# golang.org/x/crypto v0.0.0-20190211182817-74369b46fc67
 golang.org/x/crypto/bcrypt
 golang.org/x/crypto/blowfish
 golang.org/x/crypto/ed25519
@@ -96,7 +111,7 @@ golang.org/x/oauth2
 golang.org/x/oauth2/bitbucket
 golang.org/x/oauth2/github
 golang.org/x/oauth2/internal
-# golang.org/x/sys v0.0.0-20151211033651-833a04a10549
+# golang.org/x/sys v0.0.0-20190209173611-3b5209105503
 golang.org/x/sys/unix
 # golang.org/x/text v0.0.0-20170401064109-f4b4367115ec
 golang.org/x/text/secure/bidirule
@@ -139,5 +154,5 @@ gopkg.in/ldap.v2
 gopkg.in/square/go-jose.v2
 gopkg.in/square/go-jose.v2/cipher
 gopkg.in/square/go-jose.v2/json
-# gopkg.in/yaml.v2 v2.0.0-20160301204022-a83829b6f129
+# gopkg.in/yaml.v2 v2.2.2
 gopkg.in/yaml.v2

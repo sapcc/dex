@@ -96,8 +96,6 @@ github.com/ugorji/go/codec v0.0.0-20181127175209-856da096dbdf h1:BLcwkDfQ8QPXNXB
 github.com/ugorji/go/codec v0.0.0-20181127175209-856da096dbdf/go.mod h1:VFNgLljTbGfSG7qAOspJ7OScBnGdDN/yBr0sguwnwf0=
 github.com/xiang90/probing v0.0.0-20160813154853-07dd2e8dfe18 h1:MPPkRncZLN9Kh4MEFmbnK4h3BD7AUmskWv2+EeZJCCs=
 github.com/xiang90/probing v0.0.0-20160813154853-07dd2e8dfe18/go.mod h1:UETIi67q53MR2AWcXfiuqkDkRtnGDLqkBTpCHuJHxtU=
-golang.org/x/crypto v0.0.0-20160711182412-2c99acdd1e9b h1:2jrSTd+N8P7Wg79ClE25uXmVIE7WluBSpTSsQQ2Nypo=
-golang.org/x/crypto v0.0.0-20160711182412-2c99acdd1e9b/go.mod h1:6SG95UA2DQfeDnfUPMdvaQW0Q7yPrPDi9nlGo2tz2b4=
 golang.org/x/crypto v0.0.0-20190211182817-74369b46fc67 h1:ng3VDlRp5/DHpSWl02R4rM9I+8M2rhmsuLwAMmkLQWE=
 golang.org/x/crypto v0.0.0-20190211182817-74369b46fc67/go.mod h1:6SG95UA2DQfeDnfUPMdvaQW0Q7yPrPDi9nlGo2tz2b4=
 golang.org/x/lint v0.0.0-20181026193005-c67002cb31c3 h1:x/bBzNauLQAlE3fLku/xy92Y8QwKX5HZymrMz2IiKFc=
@@ -108,8 +106,7 @@ golang.org/x/oauth2 v0.0.0-20160718223228-08c8d727d239 h1:zW4VTIvN4l/liomF2Dkpwz
 golang.org/x/oauth2 v0.0.0-20160718223228-08c8d727d239/go.mod h1:N/0e6XlmueqKjAGxoOufVs8QHGRruUQn6yWY3a++T0U=
 golang.org/x/sync v0.0.0-20181108010431-42b317875d0f h1:Bl/8QSvNqXvPGPGXa2z5xUTmV7VDcZyvRZ+QQXkXTZQ=
 golang.org/x/sync v0.0.0-20181108010431-42b317875d0f/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
-golang.org/x/sys v0.0.0-20151211033651-833a04a10549 h1:imXIGlmpdV8HlMP9DTrSVaxjoffgGbwFZdJl0Ous5dc=
-golang.org/x/sys v0.0.0-20151211033651-833a04a10549/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
+golang.org/x/sys v0.0.0-20190209173611-3b5209105503 h1:5SvYFrOM3W8Mexn9/oA44Ji7vhXAZQ9hiP+1Q/DMrWg=
 golang.org/x/sys v0.0.0-20190209173611-3b5209105503/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
 golang.org/x/text v0.0.0-20170401064109-f4b4367115ec h1:IQbbXMrYo9hsfbt8unKNTFivvnNgGfA4p2HQLJmfrQU=
 golang.org/x/text v0.0.0-20170401064109-f4b4367115ec/go.mod h1:NqM8EUOU14njkJ3fqMW+pc6Ldnwhi/IjpwHt7yyuwOQ=
@@ -132,7 +129,5 @@ gopkg.in/ldap.v2 v2.5.1 h1:wiu0okdNfjlBzg6UWvd1Hn8Y+Ux17/u/4nlk4CQr6tU=
 gopkg.in/ldap.v2 v2.5.1/go.mod h1:oI0cpe/D7HRtBQl8aTg+ZmzFUAvu4lsv3eLXMLGFxWk=
 gopkg.in/square/go-jose.v2 v2.1.8 h1:yECBkTX7ypNaRFILw4trAAYXRLvcGxTeHCBKj/fc8gU=
 gopkg.in/square/go-jose.v2 v2.1.8/go.mod h1:M9dMgbHiYLoDGQrXy7OpJDJWiKiU//h+vD76mk0e1AI=
-gopkg.in/yaml.v2 v2.0.0-20160301204022-a83829b6f129 h1:RBgb9aPUbZ9nu66ecQNIBNsA7j3mB5h8PNDIfhPjaJg=
-gopkg.in/yaml.v2 v2.0.0-20160301204022-a83829b6f129/go.mod h1:JAlM8MvJe8wmxCU4Bli9HhUf9+ttbYbLASfIpnQbh74=
 gopkg.in/yaml.v2 v2.2.2 h1:ZCJp+EgiOT7lHqUV2J862kp8Qj64Jo6az82+3Td9dZw=
 gopkg.in/yaml.v2 v2.2.2/go.mod h1:hI93XBmqTisBFMUTm0b8Fm+jr3Dg1NNxqwp+5A1VGuI=

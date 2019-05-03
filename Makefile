@@ -3,6 +3,8 @@ ORG_PATH=github.com/dexidp
 REPO_PATH=$(ORG_PATH)/$(PROJ)
 export PATH := $(PWD)/bin:$(PATH)
 
+export GO111MODULE := on
+
 VERSION ?= $(shell ./scripts/git-version)
 
 DOCKER_REPO=hub.global.cloud.sap/monsoon/dex

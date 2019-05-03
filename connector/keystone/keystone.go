@@ -3,6 +3,7 @@ package keystone
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/dexidp/dex/connector"
@@ -10,20 +11,49 @@ import (
 	"github.com/gophercloud/gophercloud"
 	"github.com/gophercloud/gophercloud/openstack"
 	"github.com/gophercloud/gophercloud/openstack/identity/v3/groups"
-	tokens3 "github.com/gophercloud/gophercloud/openstack/identity/v3/tokens"
+	"github.com/gophercloud/gophercloud/openstack/identity/v3/roles"
+	"github.com/gophercloud/gophercloud/openstack/identity/v3/tokens"
 	"github.com/gophercloud/gophercloud/openstack/identity/v3/users"
+	"github.com/gophercloud/utils/openstack/clientconfig"
 )
 
+const (
+	DefaultDomain          string = "default"
+	DefaultPrompt          string = "Username"
+	DefaultGroupNameFormat string = "openstack_group:%s"
+	DefaultRoleNameFormat  string = "openstack_role:%s"
+)
+
+type scope struct {
+	ProjectID   string `json:"projectID,omitempty"`
+	ProjectName string `json:"projectName,omitempty"`
+	DomainID    string `json:"domainID,omitempty"`
+	DomainName  string `json:"domainName,omitempty"`
+}
+
+type token struct {
+	UserID    string   `json:"userID,omitempty"`
+	ProjectID string   `json:"projectID,omitempty"`
+	DomainID  string   `json:"domainID,omitempty"`
+	Roles     []string `json:"roles,omitempty"`
+}
+
 type conn struct {
-	Provider   *gophercloud.ProviderClient
-	Client     *gophercloud.ServiceClient
-	Domain     string
-	Logger     log.Logger
-	UserPrompt string
+	ProviderClient *gophercloud.ProviderClient
+	ServiceClient  *gophercloud.ServiceClient
+	Logger         log.Logger
+	Config         *Config
 }
 
 // Config holds the configuration parameters for Keystone connector.
-// Keystone should expose API v3
+// Keystone should expose API v3.
+// A service account (adminUsername) with privileges to retrieve users, groups and role-assignments
+// needs to be configured (permissions can be scoped with adminProject/adminDomain).
+// If desired, a user roles can be included into the groups claim. Set "includeRolesInGroups" and specify an
+// authScope (keystone domain and/or project) which will be applied to the user auth requests to evaluate the users roles.
+// The groups claim entries can be namespaced by specifying a roleNameFormat and groupNameFormat.
+//
+// In case users should be authenticated within a specific scope to
 // An example config:
 //	connectors:
 //		type: keystone
@@ -36,17 +66,28 @@ type conn struct {
 //      	adminPassword: DEMO_PASS
 //      	adminUserDomain: Default
 //      	adminProject: admin
-//      	adminProjectDomain: Default
+//      	adminDomain: Default
+//			includeRolesInGroups: true
+//			authScope:
+//				projectName: the-users-project
+//				domainName: the-projects-domain
+//			roleNameFormat: "os_role:%s"
+//			groupNameFormat: "os_group:%s"
+
 type Config struct {
-	Domain                 string `json:"domain"`
-	Host                   string `json:"host"`
-	AdminUsername          string `json:"adminUsername"`
-	AdminPassword          string `json:"adminPassword"`
-	AdminUserDomainName    string `json:"adminUserDomain"`
-	AdminProject           string `json:"adminProject"`
-	AdminProjectDomainName string `json:"adminProjectDomain"`
-	AdminDomainName        string `json:"adminDomain"`
-	Prompt                 string `json:"usernamePrompt"`
+	Cloud                string `json:"cloud"`
+	Domain               string `json:"domain"`
+	Host                 string `json:"host"`
+	AdminUsername        string `json:"adminUsername"`
+	AdminPassword        string `json:"adminPassword"`
+	AdminUserDomainName  string `json:"adminUserDomain"`
+	AdminProject         string `json:"adminProject"`
+	AdminDomain          string `json:"adminDomain"`
+	Prompt               string `json:"prompt"`
+	AuthScope            *scope `json:"authScope,omitempty"`
+	IncludeRolesInGroups *bool  `json:"includeRolesInGroups,omitempty"`
+	RoleNameFormat       string `json:"roleNameFormat,omitempty"`
+	GroupNameFormat      string `json:"groupNameFormat,omitempty"`
 }
 
 var (
@@ -56,87 +97,146 @@ var (
 
 // Open returns an authentication strategy using Keystone.
 func (c *Config) Open(id string, logger log.Logger) (connector.Connector, error) {
-	opts := gophercloud.AuthOptions{
-		IdentityEndpoint: c.Host,
-		Username:         c.AdminUsername,
-		Password:         c.AdminPassword,
-		DomainName:       c.AdminUserDomainName,
-		Scope:            &gophercloud.AuthScope{},
-		AllowReauth:      true,
+	// sanitize configuration with some default values if they have not been provided
+	if c.Domain == "" {
+		c.Domain = DefaultDomain
+	}
+	if c.Prompt == "" {
+		c.Prompt = DefaultPrompt
+	}
+	if c.IncludeRolesInGroups == nil {
+		include := false
+		c.IncludeRolesInGroups = &include
+	}
+	if c.GroupNameFormat == "" {
+		c.GroupNameFormat = DefaultGroupNameFormat
+	}
+	if c.RoleNameFormat == "" {
+		c.RoleNameFormat = DefaultRoleNameFormat
+	}
+
+	// gopercloud auth configuration
+	authInfo := &clientconfig.AuthInfo{
+		AuthURL: c.Host,
+		Username: c.AdminUsername,
+		Password: c.AdminPassword,
+		UserDomainName: c.AdminUserDomainName,
 	}
 
 	if c.AdminProject != "" {
-		opts.Scope.ProjectName = c.AdminProject
-		opts.Scope.DomainName = c.AdminProjectDomainName
+		authInfo.ProjectName = c.AdminProject
+		authInfo.ProjectDomainName = c.AdminDomain
 	} else {
-		if c.AdminDomainName != "" {
-			opts.Scope.DomainName = c.AdminDomainName
-		}
+		authInfo.DomainName = c.AdminDomain
 	}
 
-	provider, err := openstack.AuthenticatedClient(opts)
+	authOpts := &clientconfig.ClientOpts{
+		Cloud: c.Cloud,
+		AuthInfo: authInfo,
+	}
+
+	providerClient, err := clientconfig.AuthenticatedClient(authOpts)
 	if err != nil {
 		return nil, fmt.Errorf("service-account %s@%s authentication failed: %v", c.AdminUsername, c.Domain, err)
 	}
 
-	client, err := openstack.NewIdentityV3(provider, gophercloud.EndpointOpts{})
-
-	prompt := c.Prompt
+	serviceClient, err := openstack.NewIdentityV3(providerClient, gophercloud.EndpointOpts{})
 
 	return &conn{
-		provider,
-		client,
-		c.Domain,
+		providerClient,
+		serviceClient,
 		logger,
-		prompt}, nil
+		c}, nil
 }
 
 func (p *conn) Close() error { return nil }
 
 func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, password string) (identity connector.Identity, validPassword bool, err error) {
+	// we need authentication options for the user
 	opts := gophercloud.AuthOptions{
-		IdentityEndpoint: p.Provider.IdentityEndpoint,
+		IdentityEndpoint: p.ProviderClient.IdentityEndpoint,
 		Username:         username,
 		Password:         password,
-		DomainName:       p.Domain,
+		DomainName:       p.Config.Domain,
 	}
 
+	// set the desired authentication scope
+	if p.Config.AuthScope != nil {
+		opts.Scope = &gophercloud.AuthScope{
+			DomainID:    p.Config.AuthScope.DomainID,
+			DomainName:  p.Config.AuthScope.DomainName,
+			ProjectID:   p.Config.AuthScope.ProjectID,
+			ProjectName: p.Config.AuthScope.ProjectName,
+		}
+	}
+
+	// authenticate
 	provider, err := openstack.AuthenticatedClient(opts)
 	if err != nil {
 		return identity, false, err
 	}
 
-	userID, err := getAuthenticatedUserID(provider)
+	// grab attributes from keystone token
+	token, err := getTokenDetails(provider)
 	if err != nil {
 		return identity, false, err
 	}
 
+	user, err := p.getUser(token.UserID)
+	if err != nil {
+		return identity, true, err
+	}
+
+	// retrieve user groups
 	if scopes.Groups {
-		identity.Groups, err = p.getUserGroups(userID)
+		identity.Groups, err = p.getUserGroups(token.UserID)
 		if err != nil {
 			return identity, true, err
 		}
 	}
-	identity.Username = username + "@" + p.Domain
-	identity.UserID = userID
+
+	// add roles from token
+	if *p.Config.IncludeRolesInGroups {
+		for _, role := range token.Roles {
+			identity.Groups = append(identity.Groups, fmt.Sprintf(p.Config.RoleNameFormat, role))
+		}
+	}
+
+	identity.Username = username + "@" + p.Config.Domain
+	identity.UserID = token.UserID
+	if email, ok := user.Extra["email"]; ok {
+		identity.Email = email.(string)
+		identity.EmailVerified = true
+	}
+
+	if scopes.OfflineAccess {
+		// Encode token for follow up requests such as the groups query and refresh attempts.
+		if identity.ConnectorData, err = json.Marshal(token); err != nil {
+			return connector.Identity{}, false, fmt.Errorf("keystone: marshal token entry: %v", err)
+		}
+	}
+
 	return identity, true, nil
 }
 
 func (p *conn) Prompt() string {
-	if p.UserPrompt != "" {
-		return p.UserPrompt
-	}
-	return "username"
+	return p.Config.Prompt
 }
 
 func (p *conn) Refresh(ctx context.Context, scopes connector.Scopes, identity connector.Identity) (connector.Identity, error) {
+	var token token
+
+	if err := json.Unmarshal(identity.ConnectorData, &token); err != nil {
+		return identity, fmt.Errorf("keystone: failed to unmarshal internal data: %v", err)
+	}
+
 	user, err := p.getUser(identity.UserID)
 	if err != nil {
 		return identity, err
 	}
 
 	if !user.Enabled {
-		return identity, fmt.Errorf("user %s@%s is disabled", user.Name, p.Domain)
+		return identity, fmt.Errorf("user %s@%s is disabled", user.Name, p.Config.Domain)
 	}
 
 	if scopes.Groups {
@@ -145,42 +245,76 @@ func (p *conn) Refresh(ctx context.Context, scopes connector.Scopes, identity co
 			return identity, err
 		}
 	}
+
+	if *p.Config.IncludeRolesInGroups {
+		target := ""
+		id := ""
+		if token.ProjectID != "" {
+			target = "project"
+			id = token.ProjectID
+		} else {
+			if token.DomainID != "" {
+				target = "domain"
+				id = token.DomainID
+			}
+		}
+		if id != "" {
+			userRoles, err := p.getUserRoles(identity.UserID, target, id)
+			if err != nil {
+				return identity, err
+			}
+			identity.Groups = append(identity.Groups, userRoles...)
+		}
+	}
 	return identity, nil
 }
 
-func getAuthenticatedUserID(providerClient *gophercloud.ProviderClient) (string, error) {
+func getTokenDetails(providerClient *gophercloud.ProviderClient) (*token, error) {
+	token := &token{}
 	r := providerClient.GetAuthResult()
 	if r == nil {
 		//ProviderClient did not use openstack.Authenticate(), e.g. because token
 		//was set manually with ProviderClient.SetToken()
-		return "", errors.New("no AuthResult available")
+		return token, errors.New("no AuthResult available")
 	}
 	switch r := r.(type) {
-	case tokens3.CreateResult:
+	case tokens.CreateResult:
 		u, err := r.ExtractUser()
 		if err != nil {
-			return "", err
+			return token, err
 		}
-		return u.ID, nil
+		token.UserID = u.ID
+		p, err := r.ExtractProject()
+		if p != nil {
+			token.ProjectID = p.ID
+			token.DomainID = p.Domain.ID
+		}
+		tokenRoles, err := r.ExtractRoles()
+		if tokenRoles != nil {
+			token.Roles = make([]string, 0)
+			for _, role := range tokenRoles {
+				token.Roles = append(token.Roles, role.Name)
+			}
+		}
+		return token, nil
 	default:
 		panic(fmt.Sprintf("got unexpected AuthResult type %t", r))
 	}
 }
 
 func (p *conn) getUser(userID string) (*users.User, error) {
-	result := users.Get(p.Client, userID)
+	result := users.Get(p.ServiceClient, userID)
 	user, err := result.Extract()
 	if err != nil {
 		return nil, fmt.Errorf("user-id %s not found: %v", userID, err)
 	}
-
 	return user, nil
 }
 
 func (p *conn) getUserGroups(userID string) ([]string, error) {
 	result := make([]string, 0)
 
-	allPages, err := users.ListGroups(p.Client, userID).AllPages()
+	allPages, err := users.ListGroups(p.ServiceClient, userID).AllPages()
 	if err != nil {
 		return nil, fmt.Errorf("list groups for user-id %s failed: %v", userID, err)
 	}
@@ -191,7 +325,42 @@ func (p *conn) getUserGroups(userID string) ([]string, error) {
 	}
 
 	for _, group := range allGroups {
-		result = append(result, group.Name)
+		result = append(result, fmt.Sprintf(p.Config.GroupNameFormat, group.Name))
+	}
+
+	return result, nil
+}
+
+func (p *conn) getUserRoles(userID string, target string, id string) ([]string, error) {
+	effective := true
+	result := make([]string, 0)
+
+	opts := roles.ListAssignmentsOpts{
+		UserID:    userID,
+		Effective: &effective,
+	}
+
+	if id != "" {
+		if target == "project" {
+			opts.ScopeProjectID = id
+		}
+		if target == "domain" {
+			opts.ScopeDomainID = id
+		}
+	}
+
+	allPages, err := roles.ListAssignments(p.ServiceClient, opts).AllPages()
+	if err != nil {
+		return nil, fmt.Errorf("list role assignments for user-id %s failed: %v", userID, err)
+	}
+
+	allRoles, err := roles.ExtractRoles(allPages)
+	if err != nil {
+		return nil, fmt.Errorf("extract roles for user-id %s failed: %v", userID, err)
+	}
+
+	for _, role := range allRoles {
+		result = append(result, fmt.Sprintf(p.Config.RoleNameFormat, role.Name))
 	}
 
 	return result, nil
