@@ -487,8 +487,8 @@ func (s *Server) finalizeLogin(identity connector.Identity, authReq storage.Auth
 		email = email + " (unverified)"
 	}
 
-	s.logger.Infof("login successful: connector %q, username=%q, email=%q, groups=%q",
-		authReq.ConnectorID, claims.Username, email, claims.Groups)
+	s.logger.Infof("login successful: connector %q, userid=%q, username=%q, email=%q, groups=%q",
+		authReq.ConnectorID, claims.UserID, claims.Username, email, claims.Groups)
 
 	return path.Join(s.issuerURL.Path, "/approval") + "?req=" + authReq.ID, nil
 }
@@ -1151,8 +1151,8 @@ func (s *Server) handlePasswordGrant(w http.ResponseWriter, r *http.Request, cli
 		return
 	}
 
-	s.logger.Infof("login successful: connector %q, username=%q, email=%q, groups=%q",
-		s.passwordConnectorID, claims.Username, claims.Email, claims.Groups)
+	s.logger.Infof("login successful: connector %q, userid=%q, username=%q, email=%q, groups=%q",
+		s.passwordConnectorID, claims.UserID, claims.Username, claims.Email, claims.Groups)
 
 	s.writeAccessToken(w, idToken, accessToken, refreshToken, expiry)
 }
