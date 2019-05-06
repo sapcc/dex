@@ -354,14 +354,28 @@ func (p *conn) getUserRoles(userID string, target string, id string) ([]string, 
 		return nil, fmt.Errorf("list role assignments for user-id %s failed: %v", userID, err)
 	}
 
-	allRoles, err := roles.ExtractRoles(allPages)
+	allRoles, err := roles.ExtractRoleAssignments(allPages)
 	if err != nil {
-		return nil, fmt.Errorf("extract roles for user-id %s failed: %v", userID, err)
+		return nil, fmt.Errorf("extract role-assignments for user-id %s failed: %v", userID, err)
 	}
 
-	for _, role := range allRoles {
-		result = append(result, fmt.Sprintf(p.Config.RoleNameFormat, role.Name))
+	for _, roleAssignment := range allRoles {
+		role, err := p.getRole(roleAssignment.Role.ID)
+		if err != nil {
+			return nil, err
+		} else {
+			result = append(result, fmt.Sprintf(p.Config.RoleNameFormat, role.Name))
+		}
 	}
 
 	return result, nil
+}
+
+func (p *conn) getRole(roleID string) (*roles.Role, error) {
+	result := roles.Get(p.ServiceClient, roleID)
+	role, err := result.Extract()
+	if err != nil {
+		return nil, fmt.Errorf("role-id %s not found: %v", roleID, err)
+	}
+	return role, nil
 }
