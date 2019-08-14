@@ -130,12 +130,18 @@ func (c *Config) Open(id string, logger log.Logger) (connector.Connector, error)
 		authInfo.DomainName = c.AdminDomain
 	}
 
-	authOpts := &clientconfig.ClientOpts{
+	clientOpts := &clientconfig.ClientOpts{
 		Cloud: c.Cloud,
 		AuthInfo: authInfo,
 	}
 
-	providerClient, err := clientconfig.AuthenticatedClient(authOpts)
+	authOptions, err := clientconfig.AuthOptions(clientOpts)
+	if err != nil {
+		return nil, fmt.Errorf("could not evaluate openstack credentials: %v", err)
+	}
+	authOptions.AllowReauth = true
+
+	providerClient, err := openstack.AuthenticatedClient(*authOptions)
 	if err != nil {
 		return nil, fmt.Errorf("service-account %s@%s authentication failed: %v", c.AdminUsername, c.Domain, err)
 	}
