@@ -871,7 +871,7 @@ func (s *Server) generateRefreshTokenIfNeeded(w http.ResponseWriter, clientID st
 			}
 		}
 	}
-	
+
 	return refreshToken, nil
 }
 
@@ -1147,7 +1147,7 @@ func (s *Server) handlePasswordGrant(w http.ResponseWriter, r *http.Request, cli
 	}
 
 	var refreshToken string
-	if refreshToken, err = s.generateRefreshTokenIfNeeded(w, client.ID, s.passwordConnectorID, scopes, claims, nonce, nil); err != nil {
+	if refreshToken, err = s.generateRefreshTokenIfNeeded(w, client.ID, s.passwordConnectorID, scopes, claims, nonce, identity.ConnectorData); err != nil {
 		return
 	}
 
