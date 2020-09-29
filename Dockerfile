@@ -7,7 +7,7 @@ RUN cd /go/src/github.com/dexidp/dex && make release-binary
 
 FROM alpine:3.8
 
-LABEL source_repository "https://github.com/sapcc/dex"​
+LABEL source_repository "https://github.com/sapcc/dex/tree/ccloud"​
 
 # Dex connectors, such as GitHub and Google logins require root certificates.
 # Proper installations should manage those certificates, but it's a bad user
